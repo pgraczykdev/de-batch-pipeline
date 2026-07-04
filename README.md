@@ -43,9 +43,9 @@ This project covers the first two layers of a production DE stack:
 | Layer | This project | Planned |
 |---|---|---|
 | Storage & Databases | Oracle ADB (source) + Parquet (local file storage) | — |
-| Data Ingestion | Batch extract — watermark-based incremental | Etap 5: streaming via Kafka / Oracle AQ |
-| Data Pipelines | Python + SQL | Etap 3: dbt (transformation), Etap 4: Airflow (orchestration) |
-| Data Warehouse | — | Etap 2: DuckDB → Snowflake |
+| Data Ingestion | Batch extract — watermark-based incremental | Phase 5: streaming via Kafka / Oracle AQ |
+| Data Pipelines | Python + SQL | Phase 3: dbt (transformation), Phase 4: Airflow (orchestration) |
+| Data Warehouse | — | Phase 2: DuckDB → Snowflake |
 | Version Control | Git + GitHub | Docker, GitHub Actions |
 
 ---
@@ -153,7 +153,7 @@ oracle-de-pipeline/
 
 ## Roadmap
 
-| Etap | Goal | Key tools |
+| Phase | Goal | Key tools |
 |---|---|---|
 | 1 (this) | Extract Oracle → Parquet | python-oracledb, polars |
 | 2 | Load into a warehouse | DuckDB (local) → Snowflake |
