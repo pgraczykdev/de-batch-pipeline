@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: staging
+    description: "Staging source."
+    schema: staging
+    tables:
+      - name: channels
+      - name: products
+      - name: customers 
+      - name: times
+      - name: sales
