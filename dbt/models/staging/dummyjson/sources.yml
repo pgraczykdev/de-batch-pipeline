@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: staging_dummyjson
+    schema: staging
+    tables:
+      - name: products
+      - name: users
+      - name: dates
+      - name: orders
