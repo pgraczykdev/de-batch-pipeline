@@ -1,0 +1,8 @@
+de_pipeline:
+  outputs:
+    dev:
+      type: duckdb
+      path: /opt/airflow/data/warehouse.duckdb
+      threads: 1
+      schema: dbt_dev
+  target: dev
