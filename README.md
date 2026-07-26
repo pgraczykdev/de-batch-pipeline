@@ -1,21 +1,26 @@
 # de-batch-pipeline
 
-Batch pipeline in Python that extracts data from a REST API (DummyJSON) or Oracle ADB, stores it as Parquet files (Data Lake), loads it into DuckDB, and transforms it with dbt into a star schema ready for analytics.
+Batch pipeline in Python that extracts data from a REST API (DummyJSON) or Oracle ADB, stores it as Parquet files (Data Lake), loads it into DuckDB, transforms it with dbt into a star schema, and orchestrates the full flow with Apache Airflow running in Docker.
 
 ---
 
 ## Architecture
 
 ```
+Airflow DAG (de_pipeline) — scheduled daily at 06:00
+          │
+          ▼  extract_task
 API (DummyJSON) / Oracle ADB
           │
           ▼  pipeline/extract.py
   data/raw/*.parquet   (Data Lake — immutable, timestamped)
           │
-          ▼  pipeline/load.py
+          ▼  load_task
+          │  pipeline/load.py
   DuckDB  staging.*    (raw 1:1 copy from Parquet)
           │
-          ▼  dbt
+          ▼  dbt_task
+          │  dbt run
   DuckDB  dbt_dev.*
      ├── staging layer   dj_stg_* / o_stg_*   (rename, normalize)
      ├── core layer      dim_products, dim_users, dim_dates, fct_orders
@@ -32,6 +37,8 @@ API (DummyJSON) / Oracle ADB
 | Polars | DataFrame processing, Parquet I/O |
 | DuckDB | Local analytical warehouse |
 | dbt-duckdb | SQL transformations, star schema, data tests |
+| Apache Airflow | DAG orchestration — scheduling, retries, monitoring |
+| Docker | Airflow runs in containers (LocalExecutor) |
 | python-oracledb (thin) | Oracle ADB connector — wallet/mTLS, no Oracle Client needed |
 | requests | REST API client (DummyJSON) |
 | python-dotenv | Secrets management via `.env` |
@@ -91,7 +98,16 @@ oracle_pipeline:
   target: dev
 ```
 
-**4. Run the pipeline**
+**4. Run via Airflow (recommended)**
+
+```bash
+cd airflow
+docker compose up -d
+```
+
+Open `http://localhost:8080` (login: `airflow` / `airflow`), trigger the `de_pipeline` DAG manually or wait for the daily schedule.
+
+**4b. Run manually (without Airflow)**
 
 ```bash
 # Extract — fetch data, save as Parquet
@@ -126,6 +142,8 @@ dbt test
 
 **Type precision** — `oracledb.defaults.fetch_decimals = True` forces money columns to `Decimal`, not `float`, through the full round-trip: Oracle → Polars → Parquet → DuckDB.
 
+**Airflow orchestration** — a single DAG (`de_pipeline`) chains extract → load → dbt run with `BashOperator`. `default_args` applies `retries=2` and `retry_delay=1min` to all tasks. Scheduled via cron (`0 6 * * *`). Airflow runs in Docker with `LocalExecutor` — no Celery/Redis overhead needed for a single-machine setup.
+
 **Secrets outside code** — credentials live in `.env`, excluded from version control via `.gitignore`.
 
 ---
@@ -146,6 +164,11 @@ de-batch-pipeline/
 │       │   └── dummyjson/   dj_stg_products, dj_stg_users, dj_stg_dates, dj_stg_orders
 │       ├── core/            dim_products, dim_users, dim_dates, fct_orders + schema tests
 │       └── marts/           mart_revenue_by_category
+├── airflow/
+│   ├── dags/
+│   │   └── pipeline_dag.py  Airflow DAG — extract → load → dbt run
+│   ├── Dockerfile           custom image: Airflow + project dependencies
+│   └── docker-compose.yaml  LocalExecutor setup (webserver, scheduler, postgres)
 ├── data/
 │   ├── raw/             Parquet files (gitignored)
 │   ├── warehouse.duckdb DuckDB warehouse (gitignored)
@@ -164,5 +187,5 @@ de-batch-pipeline/
 | 1 | Extract Oracle → Parquet | python-oracledb, polars | done |
 | 2 | Load into a local warehouse | DuckDB, star schema | done |
 | 3 | Transform with dbt | dbt-core, dbt-duckdb | done |
-| 4 | Orchestrate the pipeline | Apache Airflow | planned |
+| 4 | Orchestrate the pipeline | Apache Airflow, Docker | done |
 | 5 | Streaming | Kafka / Oracle AQ | planned |
