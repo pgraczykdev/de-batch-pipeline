@@ -19,14 +19,26 @@ with DAG(
         bash_command='cd /opt/airflow && python -m pipeline.extract'
     )
 
-    load_task = BashOperator(
-        task_id='load_task',
+    load_duckdb_task = BashOperator(
+        task_id='load_duckdb_task',
         bash_command='cd /opt/airflow && python -m pipeline.load'
     )
 
-    dbt_task = BashOperator(
-        task_id='dbt_task',
+    load_snowflake_task = BashOperator(
+        task_id='load_snowflake_task',
+        bash_command='cd /opt/airflow && python -m pipeline.load_snowflake'
+    )
+
+    dbt_duckdb_task = BashOperator(
+        task_id='dbt_duckdb_task',
         bash_command='cd /opt/airflow/dbt && dbt run --profiles-dir /opt/airflow/dbt --exclude staging.oracle'
     )
 
-    extract_task >> load_task >> dbt_task
+    dbt_snowflake_task = BashOperator(
+        task_id='dbt_snowflake_task',
+        bash_command='cd /opt/airflow/dbt && dbt run --profiles-dir /opt/airflow/dbt --target snowflake --exclude staging.oracle'
+    )
+
+    extract_task >> [load_duckdb_task, load_snowflake_task]
+    load_duckdb_task >> dbt_duckdb_task
+    load_snowflake_task >> dbt_snowflake_task

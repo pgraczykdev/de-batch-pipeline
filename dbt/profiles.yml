@@ -5,4 +5,13 @@ de_pipeline:
       path: /opt/airflow/data/warehouse.duckdb
       threads: 1
       schema: dbt_dev
+    snowflake:
+      type: snowflake
+      account: KMOLPKL-BC40018
+      user: DE_PIPELINE_USER
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      warehouse: COMPUTE_WH
+      database: DE_PIPELINE
+      schema: dbt_dev
+      threads: 4
   target: dev
