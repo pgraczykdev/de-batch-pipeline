@@ -1,6 +1,6 @@
 # de-batch-pipeline
 
-Batch pipeline in Python that extracts data from a REST API (DummyJSON) or Oracle ADB, stores it as Parquet files (Data Lake), loads it into DuckDB, transforms it with dbt into a star schema, and orchestrates the full flow with Apache Airflow running in Docker.
+Batch pipeline in Python that extracts data from a REST API (DummyJSON) or Oracle ADB, stores it as Parquet files (Data Lake), loads into DuckDB and Snowflake in parallel, transforms with dbt into a star schema, and orchestrates the full flow with Apache Airflow running in Docker.
 
 ---
 
@@ -15,13 +15,14 @@ API (DummyJSON) / Oracle ADB
           ▼  pipeline/extract.py
   data/raw/*.parquet   (Data Lake — immutable, timestamped)
           │
-          ▼  load_task
-          │  pipeline/load.py
-  DuckDB  staging.*    (raw 1:1 copy from Parquet)
-          │
-          ▼  dbt_task
-          │  dbt run
-  DuckDB  dbt_dev.*
+          ├────────────────────────────────────────┐
+          ▼  load_duckdb_task                      ▼  load_snowflake_task
+          │  pipeline/load.py                      │  pipeline/load_snowflake.py
+  DuckDB  staging.*                       Snowflake  DE_PIPELINE.STAGING.*
+          │                                          │
+          ▼  dbt_duckdb_task                      ▼  dbt_snowflake_task
+          │  dbt run                               │  dbt run --target snowflake
+  DuckDB  dbt_dev.*                       Snowflake  DE_PIPELINE.dbt_dev.*
      ├── staging layer   dj_stg_* / o_stg_*   (rename, normalize)
      ├── core layer      dim_products, dim_users, dim_dates, fct_orders
      └── mart layer      mart_revenue_by_category
@@ -36,7 +37,8 @@ API (DummyJSON) / Oracle ADB
 | Python 3.12 | Pipeline orchestration |
 | Polars | DataFrame processing, Parquet I/O |
 | DuckDB | Local analytical warehouse |
-| dbt-duckdb | SQL transformations, star schema, data tests |
+| Snowflake | Cloud analytical warehouse (AWS EU Frankfurt) |
+| dbt-duckdb + dbt-snowflake | SQL transformations, star schema, data tests — dual target |
 | Apache Airflow | DAG orchestration — scheduling, retries, monitoring |
 | Docker | Airflow runs in containers (LocalExecutor) |
 | python-oracledb (thin) | Oracle ADB connector — wallet/mTLS, no Oracle Client needed |
@@ -81,6 +83,14 @@ ORACLE_PASSWORD=...
 ORACLE_DSN=...
 WALLET_DIR=...
 WALLET_PASSWORD=...
+
+# Snowflake
+SNOWFLAKE_ACCOUNT=...
+SNOWFLAKE_USER=...
+SNOWFLAKE_PASSWORD=...
+SNOWFLAKE_WAREHOUSE=...
+SNOWFLAKE_DATABASE=...
+SNOWFLAKE_SCHEMA=...
 ```
 
 **3. Configure dbt**
@@ -88,13 +98,22 @@ WALLET_PASSWORD=...
 Create `~/.dbt/profiles.yml`:
 
 ```yaml
-oracle_pipeline:
+de_pipeline:
   outputs:
     dev:
       type: duckdb
       path: /absolute/path/to/de-batch-pipeline/data/warehouse.duckdb
       threads: 1
       schema: dbt_dev
+    snowflake:
+      type: snowflake
+      account: ...       # from SNOWFLAKE_ACCOUNT
+      user: ...
+      password: ...
+      warehouse: ...
+      database: ...
+      schema: dbt_dev
+      threads: 4
   target: dev
 ```
 
@@ -113,12 +132,18 @@ Open `http://localhost:8080` (login: `airflow` / `airflow`), trigger the `de_pip
 # Extract — fetch data, save as Parquet
 python -m pipeline.extract
 
-# Load — Parquet → DuckDB staging + core schemas
+# Load — Parquet → DuckDB
 python -m pipeline.load
 
-# Transform — run all dbt layers
+# Load — Parquet → Snowflake
+python -m pipeline.load_snowflake
+
+# Transform — DuckDB target
 cd dbt
 dbt run
+
+# Transform — Snowflake target
+dbt run --target snowflake
 
 # Test — validate data quality
 dbt test
@@ -142,7 +167,9 @@ dbt test
 
 **Type precision** — `oracledb.defaults.fetch_decimals = True` forces money columns to `Decimal`, not `float`, through the full round-trip: Oracle → Polars → Parquet → DuckDB.
 
-**Airflow orchestration** — a single DAG (`de_pipeline`) chains extract → load → dbt run with `BashOperator`. `default_args` applies `retries=2` and `retry_delay=1min` to all tasks. Scheduled via cron (`0 6 * * *`). Airflow runs in Docker with `LocalExecutor` — no Celery/Redis overhead needed for a single-machine setup.
+**Airflow orchestration** — DAG (`de_pipeline`) fans out after extract into two parallel branches: DuckDB and Snowflake. Each branch runs its own load → dbt run independently. `default_args` applies `retries=2` and `retry_delay=1min` to all tasks. Scheduled via cron (`0 6 * * *`). Airflow runs in Docker with `LocalExecutor`.
+
+**Dual-target dbt** — the same dbt models run against both DuckDB (`--target dev`) and Snowflake (`--target snowflake`) without any code changes. DuckDB = local dev; Snowflake = cloud production target.
 
 **Secrets outside code** — credentials live in `.env`, excluded from version control via `.gitignore`.
 
@@ -153,10 +180,11 @@ dbt test
 ```
 de-batch-pipeline/
 ├── pipeline/
-│   ├── extract.py       entry point — selects source, runs extraction
-│   ├── extractors.py    OracleExtractor + DummyJsonExtractor (Protocol)
-│   ├── load.py          Parquet → DuckDB (staging + core schemas)
-│   └── io.py            write_parquet, watermark read/save
+│   ├── extract.py          entry point — selects source, runs extraction
+│   ├── extractors.py       OracleExtractor + DummyJsonExtractor (Protocol)
+│   ├── load.py             Parquet → DuckDB (staging + core schemas)
+│   ├── load_snowflake.py   Parquet → Snowflake STAGING (PUT + write_pandas)
+│   └── io.py               write_parquet, watermark read/save
 ├── dbt/
 │   └── models/
 │       ├── staging/
@@ -166,7 +194,7 @@ de-batch-pipeline/
 │       └── marts/           mart_revenue_by_category
 ├── airflow/
 │   ├── dags/
-│   │   └── pipeline_dag.py  Airflow DAG — extract → load → dbt run
+│   │   └── pipeline_dag.py  Airflow DAG — parallel DuckDB + Snowflake branches
 │   ├── Dockerfile           custom image: Airflow + project dependencies
 │   └── docker-compose.yaml  LocalExecutor setup (webserver, scheduler, postgres)
 ├── data/
@@ -188,4 +216,5 @@ de-batch-pipeline/
 | 2 | Load into a local warehouse | DuckDB, star schema | done |
 | 3 | Transform with dbt | dbt-core, dbt-duckdb | done |
 | 4 | Orchestrate the pipeline | Apache Airflow, Docker | done |
-| 5 | Streaming | Kafka / Oracle AQ | planned |
+| 5 | Cloud data warehouse | Snowflake, dbt multi-target | done |
+| 6 | Streaming | Kafka / Oracle AQ | planned |
