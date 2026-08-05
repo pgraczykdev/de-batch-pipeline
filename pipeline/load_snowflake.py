@@ -22,9 +22,12 @@ def connect() -> snowflake.connector.connect:
     )
 
 def load_table(conn, table_name: str):
-    files = list(PARQUET_DIR.glob(f"{table_name}_*.parquet")) 
-    df = pl.concat([pl.read_parquet(f) for f in files])
-    logging.info(f"{table_name}: {len(df)} rows read from {len(files)} files")
+    files = list(PARQUET_DIR.glob(f"{table_name}_*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No parquet files found for table {table_name}")
+    latest = max(files, key=lambda file: file.stat().st_mtime) 
+    df = pl.read_parquet(latest)
+    logging.info(f"{table_name}: {len(df)} rows read from {latest.name}")
     pandas_df = df.to_pandas()
     write_pandas(conn, pandas_df, table_name.upper(), schema="STAGING", auto_create_table=True, overwrite=True, quote_identifiers=False)
 

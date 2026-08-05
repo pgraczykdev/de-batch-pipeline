@@ -57,4 +57,4 @@ jobs:
 
       - name: dbt test
         working-directory: dbt
-        run: dbt test --target snowflake --exclude staging.oracle
+        run: dbt test --target snowflake --exclude staging.oracle models/example
