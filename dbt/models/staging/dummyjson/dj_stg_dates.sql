@@ -1,6 +1,6 @@
 SELECT
     date_id,
-    date,
+    TO_DATE(TO_TIMESTAMP(date / 1000)) AS date,
     day,
     month,
     year,
